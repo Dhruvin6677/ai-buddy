@@ -5,7 +5,7 @@ import time
 
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
-API_VERSION = "v19.0"
+API_VERSION = "v23.0"
 
 def send_message(to, message):
     """Sends a standard text message."""
