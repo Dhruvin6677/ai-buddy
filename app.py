@@ -28,6 +28,7 @@ from googleapiclient.discovery import build
 
 
 from currency import convert_currency
+# Removed grammar and email functions from imports
 from grok_ai import (
     route_user_intent,
     generate_full_daily_briefing,
@@ -36,6 +37,7 @@ from grok_ai import (
     get_contextual_ai_response,
     is_document_followup_question
 )
+# Removed email_sender import
 from services import get_daily_quote, get_on_this_day_in_history, get_raw_weather_data, get_indian_festival_today
 from google_calendar_integration import get_google_auth_flow, create_google_calendar_event
 from google_drive import upload_file_to_drive, search_files_in_drive, analyze_drive_file_content
@@ -73,6 +75,7 @@ jobs_collection = db.scheduled_jobs
 jobstores = {
     'default': MongoDBJobStore(client=client, database="ai_buddy_db", collection="scheduled_jobs")
 }
+# HARDCODED TIMEZONE PRESERVED AS REQUESTED
 scheduler = BackgroundScheduler(jobstores=jobstores, timezone=pytz.timezone('Asia/Kolkata'))
 scheduler.start()
 
@@ -174,26 +177,34 @@ def home():
 def google_auth():
     sender_number = request.args.get('state')
     session['sender_number'] = sender_number
-    flow = get_google_auth_flow()
-    authorization_url, _ = flow.authorization_url(access_type='offline', include_granted_scopes='true', state=sender_number)
-    return redirect(authorization_url)
+    # Assuming google_calendar_integration is updated securely, calling it here
+    try:
+        flow = get_google_auth_flow()
+        authorization_url, _ = flow.authorization_url(access_type='offline', include_granted_scopes='true', state=sender_number)
+        return redirect(authorization_url)
+    except Exception as e:
+        return f"Auth Configuration Error: {e}", 500
 
 @app.route('/google-auth/callback')
 def google_auth_callback():
     state = request.args.get('state')
     sender_number = state
-    flow = get_google_auth_flow()
-    flow.fetch_token(authorization_response=request.url)
-    credentials = flow.credentials
-    save_credentials_to_db(sender_number, credentials)
-    
-    email = get_user_email_from_google(credentials)
-    if email:
-        create_or_update_user_in_db(sender_number, {"email": email})
+    try:
+        flow = get_google_auth_flow()
+        flow.fetch_token(authorization_response=request.url)
+        credentials = flow.credentials
+        save_credentials_to_db(sender_number, credentials)
+        
+        email = get_user_email_from_google(credentials)
+        if email:
+            create_or_update_user_in_db(sender_number, {"email": email})
 
-    send_message(sender_number, "✅ Your Google account has been successfully connected!")
-    set_user_session(sender_number, None)
-    return "Authentication successful! You can return to WhatsApp."
+        send_message(sender_number, "✅ Your Google account has been successfully connected!")
+        set_user_session(sender_number, None)
+        return "Authentication successful! You can return to WhatsApp."
+    except Exception as e:
+        print(f"Auth Callback Error: {e}")
+        return "Authentication failed.", 500
 
 @app.route('/test-briefing')
 def trigger_daily_briefing():
@@ -341,6 +352,8 @@ def handle_document_message(message, sender_number, session_data, message_type):
             set_user_session(sender_number, None)
             return
 
+        # Removed 'awaiting_email_attachment' case here
+
         if simple_state in ["awaiting_pdf_to_text", "awaiting_pdf_to_docx"]:
             downloaded_path, _, mime_type = download_media_from_whatsapp(media_id, message)
             if not downloaded_path:
@@ -400,7 +413,6 @@ def handle_document_message(message, sender_number, session_data, message_type):
         if downloaded_path and os.path.exists(downloaded_path):
             os.remove(downloaded_path)
 
-# --- FIX: New function added to process meeting scheduling requests ---
 def process_meeting_scheduling(sender_number, session_data):
     creds_list = [get_credentials_from_db(sender_number)]
     attendees_emails = session_data["attendees_emails"]
@@ -416,6 +428,7 @@ def process_meeting_scheduling(sender_number, session_data):
     start_search = now + timedelta(days=1)
     end_search = now + timedelta(days=7)
 
+    # Calling find_common_free_time with original signature (no extra timezone arg)
     proposed_time = find_common_free_time(creds_list, session_data['duration_minutes'], start_search, end_search)
     
     if proposed_time:
@@ -434,6 +447,7 @@ def handle_text_message(user_text, sender_number, session_data):
     
     if user_text.startswith("delete_reminder_"):
         job_id_to_delete = user_text.split("delete_reminder_")[1]
+        # Calling get_all_reminders with original signature
         reminders = get_all_reminders(sender_number, scheduler)
         task_to_delete = next((rem['task'] for rem in reminders if rem['id'] == job_id_to_delete), "this reminder")
         send_delete_confirmation(sender_number, job_id_to_delete, task_to_delete)
@@ -462,6 +476,7 @@ def handle_text_message(user_text, sender_number, session_data):
             end_time = start_time + timedelta(minutes=session_data["duration_minutes"])
             topic = session_data["topic"]
             
+            # Calling create_meeting_event with original signature
             confirmation_message = create_meeting_event(organizer_creds, attendees_emails, start_time, end_time, topic)
             send_message(sender_number, confirmation_message)
             set_user_session(sender_number, None)
@@ -707,6 +722,9 @@ def handle_text_message(user_text, sender_number, session_data):
             send_message(sender_number, response_text)
             return
 
+        # Removed 'awaiting_email_*' states here
+
+    
     if user_text_lower in menu_commands or any(greet in user_text_lower for greet in greetings):
         set_user_session(sender_number, None)
         user_data = get_user_from_db(sender_number)
@@ -717,32 +735,35 @@ def handle_text_message(user_text, sender_number, session_data):
             send_welcome_message(sender_number, user_data.get("name"))
         return
 
-    if user_text == "1":
+    # UPDATED MENU OPTION NUMBERS
+    if user_text == "1": # Set Reminder
         set_user_session(sender_number, "awaiting_reminder_text")
         send_message(sender_number, "🕒 Sure, what's the reminder? (e.g., 'Call mom tomorrow at 5pm')")
         return
-    elif user_text == "2":
+    elif user_text == "2": # Ask AI (was 3)
         set_user_session(sender_number, "awaiting_ai")
         send_message(sender_number, "🤖 I'm ready! Ask me anything, and I'll do my best to answer.")
         return
-    elif user_text == "3":
+    elif user_text == "3": # File Conv (was 4)
         send_conversion_menu(sender_number)
         return
-    elif user_text == "4":
+    elif user_text == "4": # Weather (was 5)
         set_user_session(sender_number, "awaiting_weather")
         send_message(sender_number, "🏙️ Enter a city or location to get the current weather.")
         return
-    elif user_text == "5":
+    elif user_text == "5": # Currency (was 6)
         send_message(sender_number, "💱 What would you like to convert? (e.g., '100 USD to INR')")
         return
-    elif user_text == "6":
+    elif user_text == "6": # Drive (was 8)
         creds = get_credentials_from_db(sender_number)
         if creds:
             send_google_drive_menu(sender_number)
         else:
             send_message(sender_number, "⚠️ To use Google Drive features, you must first connect your Google account.")
         return
+    # Removed option 7 (Email)
     elif user_text == "reminders_check":
+        # Calling get_all_reminders with original signature
         reminders = get_all_reminders(sender_number, scheduler)
         send_reminders_list(sender_number, reminders)
         return
@@ -924,6 +945,7 @@ def process_natural_language_request(user_text, sender_number):
                 send_message(sender_number, f"Got it! Scheduling {len(reminders_to_set)} reminders...")
             for rem in reminders_to_set:
                  task, timestamp, recurrence = rem.get("task"), rem.get("timestamp"), rem.get("recurrence")
+                 # Calling schedule_reminder with original signature (no extra timezone arg)
                  conf = schedule_reminder(task, timestamp, recurrence, sender_number, get_credentials_from_db, scheduler)
                  send_message(sender_number, conf)
                  time.sleep(1)
@@ -987,6 +1009,7 @@ def process_and_schedule_reminders(user_text, sender_number):
                 send_message(sender_number, f"Okay, scheduling {len(reminders_to_set)} reminders. I'll send a confirmation for each.")
             for rem in reminders_to_set:
                 task, timestamp, recurrence = rem.get("task"), rem.get("timestamp"), rem.get("recurrence")
+                # Calling schedule_reminder with original signature
                 conf = schedule_reminder(task, timestamp, recurrence, sender_number, get_credentials_from_db, scheduler)
                 send_message(sender_number, conf)
                 time.sleep(1)
