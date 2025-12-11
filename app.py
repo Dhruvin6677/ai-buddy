@@ -28,7 +28,7 @@ from googleapiclient.discovery import build
 
 
 from currency import convert_currency
-# Imported new email function
+# Imported new email function and transcription function
 from grok_ai import (
     route_user_intent,
     generate_full_daily_briefing,
@@ -36,7 +36,8 @@ from grok_ai import (
     analyze_document_context,
     get_contextual_ai_response,
     is_document_followup_question,
-    draft_email_interactive
+    draft_email_interactive,
+    transcribe_audio  # <--- NEW
 )
 # Imported new email sender
 from email_sender import send_email
@@ -252,6 +253,10 @@ def download_media_from_whatsapp(media_id, message_payload):
         elif message_type == 'image':
             ext = mimetypes.guess_extension(media_info.get('mime_type', '')) or '.jpg'
             original_filename = f"whatsapp_image_{media_id}{ext}"
+        elif message_type == 'audio':
+            # WhatsApp voice notes usually come as audio/ogg
+            ext = mimetypes.guess_extension(media_info.get('mime_type', '')) or '.ogg'
+            original_filename = f"whatsapp_audio_{media_id}{ext}"
 
         download_response = requests.get(media_url, headers=headers)
         download_response.raise_for_status()
@@ -296,14 +301,53 @@ def webhook():
             handle_text_message(user_text, sender_number, session_data)
         elif msg_type in ["document", "image"]:
             handle_document_message(message, sender_number, session_data, msg_type)
+        elif msg_type == "audio":
+            handle_audio_message(message, sender_number, session_data)
         else:
-            send_message(sender_number, "🤔 Sorry, I can only process text, documents, and images at the moment.")
+            send_message(sender_number, "🤔 Sorry, I can only process text, audio, documents, and images at the moment.")
 
     except Exception as e:
         print(f"❌ Unhandled Error: {e}")
     return "OK", 200
 
 # === MESSAGE HANDLERS ===
+
+def handle_audio_message(message, sender_number, session_data):
+    """
+    Downloads audio, transcribes it, and passes text to the normal handler.
+    """
+    media_id = message.get("audio", {}).get('id')
+    if not media_id:
+        send_message(sender_number, "❌ I couldn't process that audio.")
+        return
+
+    # Inform user we are listening
+    send_message(sender_number, "🎙️ Listening...")
+
+    downloaded_path = None
+    try:
+        downloaded_path, _, _ = download_media_from_whatsapp(media_id, message)
+        
+        if downloaded_path:
+            # Transcribe using Groq Whisper
+            transcribed_text = transcribe_audio(downloaded_path)
+            
+            if transcribed_text:
+                send_message(sender_number, f"🗣️ *You said:* \"{transcribed_text}\"")
+                # Pass the text to the standard text handler to trigger intent/actions
+                handle_text_message(transcribed_text, sender_number, session_data)
+            else:
+                send_message(sender_number, "❌ Sorry, I couldn't understand the audio.")
+        else:
+            send_message(sender_number, "❌ Failed to download audio note.")
+            
+    except Exception as e:
+        print(f"Audio handling error: {e}")
+        send_message(sender_number, "❌ An error occurred while processing your voice note.")
+    finally:
+        if downloaded_path and os.path.exists(downloaded_path):
+            os.remove(downloaded_path)
+
 def handle_document_message(message, sender_number, session_data, message_type):
     media_id = message.get(message_type, {}).get('id')
     if not media_id:
