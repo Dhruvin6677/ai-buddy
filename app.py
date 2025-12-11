@@ -912,9 +912,9 @@ def process_natural_language_request(user_text, sender_number):
     elif intent == "get_bot_identity":
         response_text = (
             "I am AI Buddy, a smart WhatsApp assistant 🤖.\n\n"
-            "I was created by *Sajja Dhruvin Sai* and *Leela Ranga Prasad*, "
-            "two passionate B.Tech 2nd year students from SAHE University.\n\n"
-            "They designed me to make everyday digital tasks easier and more conversational. "
+            "I was created by *Sajja Dhruvin Sai* , "
+            "a passionate B.Tech 2nd year student from SAHE University.\n\n"
+            "He designed me to make everyday digital tasks easier and more conversational. "
             "You can ask me to set reminders, search for information, manage your files, and much more!"
         )
 
