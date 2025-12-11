@@ -28,16 +28,18 @@ from googleapiclient.discovery import build
 
 
 from currency import convert_currency
-# Removed grammar and email functions from imports
+# Imported new email function
 from grok_ai import (
     route_user_intent,
     generate_full_daily_briefing,
     ai_reply,
     analyze_document_context,
     get_contextual_ai_response,
-    is_document_followup_question
+    is_document_followup_question,
+    draft_email_interactive
 )
-# Removed email_sender import
+# Imported new email sender
+from email_sender import send_email
 from services import get_daily_quote, get_on_this_day_in_history, get_raw_weather_data, get_indian_festival_today
 from google_calendar_integration import get_google_auth_flow, create_google_calendar_event
 from google_drive import upload_file_to_drive, search_files_in_drive, analyze_drive_file_content
@@ -308,6 +310,24 @@ def handle_document_message(message, sender_number, session_data, message_type):
         send_message(sender_number, "❌ I couldn't find the file in your message.")
         return
 
+    # --- EMAIL ATTACHMENT HANDLING ---
+    if isinstance(session_data, dict) and session_data.get("state") == "email_drafting":
+        send_message(sender_number, "📎 Downloading attachment for your email...")
+        downloaded_path, original_filename, mime_type = download_media_from_whatsapp(media_id, message)
+        
+        if downloaded_path:
+            # Add to session attachments
+            attachments = session_data.get("attachments", [])
+            attachments.append(downloaded_path)
+            session_data["attachments"] = attachments
+            set_user_session(sender_number, session_data)
+            
+            send_message(sender_number, f"✅ Attached '{original_filename}'.\nYou can attach more files or continue writing your email.")
+        else:
+            send_message(sender_number, "❌ Failed to download attachment.")
+        return
+    # ---------------------------------
+
     downloaded_path = None
     try:
         simple_state = None
@@ -351,8 +371,6 @@ def handle_document_message(message, sender_number, session_data, message_type):
             
             set_user_session(sender_number, None)
             return
-
-        # Removed 'awaiting_email_attachment' case here
 
         if simple_state in ["awaiting_pdf_to_text", "awaiting_pdf_to_docx"]:
             downloaded_path, _, mime_type = download_media_from_whatsapp(media_id, message)
@@ -464,6 +482,84 @@ def handle_text_message(user_text, sender_number, session_data):
     if user_text == "cancel_delete":
         send_message(sender_number, "Deletion cancelled.")
         return
+
+    # --- EMAIL ASSISTANT STATE LOOP (NEW) ---
+    if isinstance(session_data, dict) and session_data.get("state") == "email_drafting":
+        
+        if user_text_lower in ["exit", "cancel", "stop"]:
+            set_user_session(sender_number, None)
+            send_message(sender_number, "❌ Email drafting cancelled.")
+            return
+
+        # 1. Update History
+        history = session_data.get("history", [])
+        history.append({"role": "user", "content": user_text})
+        
+        # 2. Call Grok (Interactive Mode)
+        # Inform user we are processing (useful for long AI thoughts)
+        # send_message(sender_number, "🤖 ...") 
+        
+        ai_response = draft_email_interactive(history)
+        
+        # 3. Check if AI wants to SEND (JSON received)
+        if isinstance(ai_response, dict) and ai_response.get("action") == "SEND_EMAIL":
+            
+            # Extract details
+            subject = ai_response.get("subject")
+            body = ai_response.get("body")
+            scheduled_time_str = ai_response.get("scheduled_time")
+            recipient = ai_response.get("recipient_email")
+            attachments = session_data.get("attachments", [])
+
+            # Fallback if AI couldn't extract recipient (ask user)
+            if not recipient or recipient == "extracted_email_address_or_null":
+                session_data["history"].append({"role": "assistant", "content": "I am ready to send, but I need the recipient's email address."})
+                set_user_session(sender_number, session_data)
+                send_message(sender_number, "⚠️ I have the email ready, but I need the **recipient's email address**. Please type it now.")
+                return
+
+            creds = get_credentials_from_db(sender_number)
+            if not creds:
+                send_message(sender_number, "❌ Cannot send: Google Account not connected. Type .reconnect")
+                set_user_session(sender_number, None)
+                return
+
+            # Handle Scheduling
+            if scheduled_time_str and scheduled_time_str != "NOW":
+                try:
+                    run_date = date_parser.parse(scheduled_time_str)
+                    
+                    # Add job to scheduler
+                    scheduler.add_job(
+                        func=send_email,
+                        trigger='date',
+                        run_date=run_date,
+                        args=[creds, recipient, subject, body, attachments]
+                    )
+                    send_message(sender_number, f"✅ Email scheduled for *{run_date.strftime('%A, %b %d at %I:%M %p')}*!")
+                except Exception as e:
+                     send_message(sender_number, f"❌ Error understanding time '{scheduled_time_str}'. Sending NOW instead.")
+                     send_email(creds, recipient, subject, body, attachments)
+            else:
+                # Send Immediately
+                send_message(sender_number, "📨 Sending email now...")
+                status = send_email(creds, recipient, subject, body, attachments)
+                send_message(sender_number, status)
+
+            # Cleanup
+            set_user_session(sender_number, None)
+            return
+
+        # 4. Normal Conversation (AI asks questions or shows draft)
+        else:
+            # Send AI response to user
+            send_message(sender_number, str(ai_response))
+            
+            # Update history and save session
+            history.append({"role": "assistant", "content": str(ai_response)})
+            session_data["history"] = history
+            set_user_session(sender_number, session_data)
+            return
 
     if user_text.startswith("confirm_meeting_"):
         session_id = user_text.split("confirm_meeting_")[1]
@@ -722,8 +818,6 @@ def handle_text_message(user_text, sender_number, session_data):
             send_message(sender_number, response_text)
             return
 
-        # Removed 'awaiting_email_*' states here
-
     
     if user_text_lower in menu_commands or any(greet in user_text_lower for greet in greetings):
         set_user_session(sender_number, None)
@@ -761,7 +855,22 @@ def handle_text_message(user_text, sender_number, session_data):
         else:
             send_message(sender_number, "⚠️ To use Google Drive features, you must first connect your Google account.")
         return
-    # Removed option 7 (Email)
+    # --- NEW OPTION 7: EMAIL ASSISTANT ---
+    elif user_text == "7" or "email" in user_text_lower: 
+        if not get_credentials_from_db(sender_number):
+             send_message(sender_number, "⚠️ To send emails, please connect your Google Account first via .reconnect")
+             return
+
+        # Initialize Email Session
+        initial_state = {
+            "state": "email_drafting",
+            "history": [],
+            "attachments": [] 
+        }
+        set_user_session(sender_number, initial_state)
+        send_message(sender_number, "📧 **AI Email Assistant**\n\nTell me what you want to write. I'll help you draft, refine, and schedule it.\n\n*Example:* 'Write a sick leave email to my boss for tomorrow.'\n\n_(You can also send a file now to attach it)_")
+        return
+    # -------------------------------------
     elif user_text == "reminders_check":
         # Calling get_all_reminders with original signature
         reminders = get_all_reminders(sender_number, scheduler)
@@ -812,10 +921,36 @@ def process_natural_language_request(user_text, sender_number):
     response_text = ""
 
     creds = get_credentials_from_db(sender_number)
-    google_intents = ["drive_upload_file", "drive_search_file", "drive_analyze_file", "get_expense_sheet", "youtube_search", "schedule_meeting"]
+    google_intents = ["drive_upload_file", "drive_search_file", "drive_analyze_file", "get_expense_sheet", "youtube_search", "schedule_meeting", "email_assistant"]
     if intent in google_intents and not creds:
         send_message(sender_number, "⚠️ To use this Google feature, you must first connect your Google account.")
         return
+
+    if intent == "email_assistant":
+         # Trigger the same logic as option 7
+         initial_state = {
+            "state": "email_drafting",
+            "history": [],
+            "attachments": [] 
+         }
+         # Add the user's initial prompt to history so AI knows what to draft immediately
+         initial_state["history"].append({"role": "user", "content": user_text})
+         set_user_session(sender_number, initial_state)
+         
+         # Immediately call AI to start the process
+         ai_response = draft_email_interactive(initial_state["history"])
+         
+         if isinstance(ai_response, dict) and ai_response.get("action") == "SEND_EMAIL":
+             # Edge case: If user said "Send email to X saying Y" in one shot and AI is confident
+             # We handle it, but usually AI will ask for confirmation.
+             # For safety, let's treat it as a response we send back to user.
+             pass 
+
+         send_message(sender_number, str(ai_response))
+         # Update history with AI response
+         initial_state["history"].append({"role": "assistant", "content": str(ai_response)})
+         set_user_session(sender_number, initial_state)
+         return
 
     if intent == "schedule_meeting":
         user_data = get_user_from_db(sender_number)
