@@ -224,7 +224,7 @@ def get_contextual_ai_response(document_text, question):
 
 def is_document_followup_question(text):
     if not GROK_API_KEY: return True
-    command_keywords = ["remind me", "hi", "hello", "hey", "menu", "what's the weather", "convert", "translate", "fix grammar", "my expenses", "send an email", ".dev", ".test", ".nuke", ".stats"]
+    command_keywords = ["remind me", "hi", "hello", "hey", "menu", "what's the weather", "my expenses", "send an email", ".dev", ".test", ".nuke", ".stats"]
     if any(keyword in text.lower() for keyword in command_keywords):
         return False
     prompt = f"""A user has previously uploaded a document and is in a follow-up conversation. Their new message is: "{text}". Is this message a question or command related to the document (e.g., "summarize it", "what are the key points?")? Or is it a completely new, unrelated command? Respond with only the word "yes" if it is a follow-up, or "no" if it is a new command."""
@@ -247,52 +247,3 @@ def ai_reply(prompt):
     except Exception as e:
         print(f"Grok AI error: {e}")
         return "⚠️ Sorry, I couldn't connect to the AI service right now."
-
-def correct_grammar_with_grok(text):
-    if not GROK_API_KEY: return "❌ The Grok API key is not configured. This feature is disabled."
-    system_prompt = "You are an expert grammar and spelling correction assistant. Correct the user's text. Only return the corrected text, without any explanation or preamble."
-    payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}], "temperature": 0.2 }
-    try:
-        res = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=20)
-        res.raise_for_status()
-        corrected_text = res.json()["choices"][0]["message"]["content"].strip().strip('"')
-        return f"✅ Corrected:\n\n_{corrected_text}_"
-    except Exception as e:
-        print(f"Grok Grammar error: {e}")
-        return "⚠️ Sorry, the grammar correction service is unavailable."
-
-def analyze_email_subject(subject):
-    if not GROK_API_KEY: return None
-    prompt = f"""You are an email assistant. The user wants to write an email with the subject: "{subject}". What are the 2-3 most important follow-up questions you should ask to get the necessary details to write this email? Return your answer as a JSON object with a single key "questions" which is an array of strings. For a 'leave' subject, ask for dates and reason. For a 'meeting request' subject, ask for topic, date/time, and attendees. For a generic subject, just ask for the main point of the email. Only return the JSON object."""
-    payload = { "model": GROK_MODEL_FAST, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "response_format": {"type": "json_object"} }
-    try:
-        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=15)
-        response.raise_for_status()
-        return json.loads(response.json()["choices"][0]["message"]["content"]).get("questions")
-    except Exception as e:
-        print(f"Grok subject analysis error: {e}")
-        return None
-
-def write_email_body_with_grok(prompt):
-    if not GROK_API_KEY: return "❌ The Grok API key is not configured. This feature is disabled."
-    system_prompt = "You are an expert email writing assistant. Based on the user's prompt, write a clear, professional, and well-formatted email body. Your entire response must consist *only* of the email body text. Do not include a subject line, greetings like 'Hello,', sign-offs like 'Sincerely,', or any preamble like 'Here is the email body:'."
-    payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}], "temperature": 0.7 }
-    try:
-        res = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=30)
-        res.raise_for_status()
-        return res.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"Grok email writing error: {e}")
-        return "❌ Sorry, I couldn't write the email body right now."
-
-def edit_email_body(original_draft, edit_instruction):
-    if not GROK_API_KEY: return None
-    prompt = f"""You are an email editor. Here is an email draft: --- DRAFT --- {original_draft} --- END DRAFT --- The user wants to make a change. Their instruction is: "{edit_instruction}". Apply the change and return only the complete, new version of the email body."""
-    payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "user", "content": prompt}], "temperature": 0.5 }
-    try:
-        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=30)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"Grok email editing error: {e}")
-        return None
