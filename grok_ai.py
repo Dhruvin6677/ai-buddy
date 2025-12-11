@@ -2,6 +2,7 @@
 import requests
 import os
 import json
+import mimetypes
 from datetime import datetime, timedelta
 
 # --- Configuration ---
@@ -16,7 +17,61 @@ GROK_HEADERS = {
     "Content-Type": "application/json"
 }
 
-# --- NEW: INTERACTIVE EMAIL DRAFTER ---
+# --- 1. VOICE INTELLIGENCE (TRANSCRIPTION) ---
+def transcribe_audio(audio_file_path):
+    """
+    Transcribes an audio file using Groq's Whisper model (via API).
+    """
+    if not GROK_API_KEY:
+        print("❌ Groq API Key missing.")
+        return None
+
+    # Verify file exists and is not empty
+    if not os.path.exists(audio_file_path) or os.path.getsize(audio_file_path) == 0:
+        print("❌ Audio file is missing or empty.")
+        return None
+
+    url = "https://api.groq.com/openai/v1/audio/transcriptions"
+    
+    headers = {
+        "Authorization": f"Bearer {GROK_API_KEY}"
+    }
+    
+    try:
+        # Open file in binary mode
+        with open(audio_file_path, "rb") as file:
+            # 1. Determine MIME type safely
+            mime_type, _ = mimetypes.guess_type(audio_file_path)
+            if not mime_type:
+                mime_type = "audio/ogg" # Safe default for WhatsApp voice notes
+
+            # 2. Construct the file payload strictly
+            files = {
+                "file": (os.path.basename(audio_file_path), file, mime_type)
+            }
+            
+            # 3. Minimal data payload to avoid 400 errors
+            data = {
+                "model": "whisper-large-v3", # Standard model
+                # "language": "en", # REMOVED: Can cause 400 if auto-detect fails
+                # "response_format": "json" # REMOVED: Default is JSON anyway
+            }
+            
+            # 4. Send Request
+            response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+            
+            # Check for errors
+            if response.status_code != 200:
+                print(f"⚠️ Groq API Error: {response.text}")
+                response.raise_for_status()
+            
+            return response.json().get("text")
+            
+    except Exception as e:
+        print(f"❌ Audio transcription error: {e}")
+        return None
+
+# --- 2. INTERACTIVE EMAIL DRAFTER ---
 def draft_email_interactive(conversation_history):
     """
     Manages the conversational email drafting loop.
@@ -333,38 +388,3 @@ def is_document_followup_question(text):
         return "yes" in response.json()["choices"][0]["message"]["content"].strip().lower()
     except:
         return True
-
-# --- VOICE TRANSCRIPTION (NEW) ---
-def transcribe_audio(audio_file_path):
-    """
-    Transcribes an audio file using Groq's Whisper model (via API).
-    """
-    if not GROK_API_KEY:
-        print("Grok API key missing for transcription.")
-        return None
-
-    url = "https://api.groq.com/openai/v1/audio/transcriptions"
-    
-    # We use the same header structure but 'Content-Type' is handled by 'files' in requests
-    headers = {
-        "Authorization": f"Bearer {GROK_API_KEY}"
-    }
-    
-    try:
-        with open(audio_file_path, "rb") as file:
-            files = {
-                "file": (os.path.basename(audio_file_path), file)
-            }
-            data = {
-                "model": "whisper-large-v3",
-                "response_format": "json"
-            }
-            
-            response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
-            response.raise_for_status()
-            
-            return response.json().get("text")
-            
-    except Exception as e:
-        print(f"Audio transcription error: {e}")
-        return None
