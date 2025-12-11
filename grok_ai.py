@@ -16,6 +16,74 @@ GROK_HEADERS = {
     "Content-Type": "application/json"
 }
 
+# --- NEW: INTERACTIVE EMAIL DRAFTER ---
+def draft_email_interactive(conversation_history):
+    """
+    Manages the conversational email drafting loop.
+    Returns either a text response (question/draft) or a JSON object (final send command).
+    """
+    if not GROK_API_KEY:
+        return "❌ Groq API Key is missing."
+
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    system_prompt = f"""
+    You are an expert AI Email Assistant. Current Time: {current_time}.
+    
+    YOUR GOAL: Help the user write a perfect email.
+    
+    RULES:
+    1. **Clarify First**: If the user's request is short or vague (e.g., "mail for leave", "write to boss"), DO NOT draft yet. 
+       - Ask clarifying questions: "Who is it for?", "When?", "What is the specific reason?".
+    2. **Draft & Refine**: Once you have sufficient details, generate a clear Subject and Body. 
+       - Show the draft to the user.
+       - Ask: "Shall I send this, or do you want to make changes?"
+    3. **Handle Scheduling**: Listen for commands like "Send it tomorrow at 10am", "Send in 2 hours", or "Send now".
+    4. **FINAL OUTPUT**: ONLY when the user explicitly confirms to SEND (e.g., "Yes, send it", "Confirm", "Send tomorrow"), output a JSON object in this format (no other text):
+    
+    JSON_ACTION: {{
+      "action": "SEND_EMAIL",
+      "recipient_email": "extracted_email_address_or_null",
+      "subject": "Final Subject Line",
+      "body": "Final Email Body Text",
+      "scheduled_time": "YYYY-MM-DD HH:MM:SS" (or "NOW" if immediate)
+    }}
+    """
+
+    # Prepare messages: System prompt first, then the conversation history
+    messages = [{"role": "system", "content": system_prompt}] + conversation_history
+
+    payload = {
+        "model": GROK_MODEL_SMART,
+        "messages": messages,
+        "temperature": 0.6,
+        "max_tokens": 1024
+    }
+
+    try:
+        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=45)
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        
+        # Check if the AI wants to send (looks for the special token)
+        if "JSON_ACTION:" in content:
+            try:
+                # Extract JSON cleanly from the response
+                json_str = content.split("JSON_ACTION:")[1].strip()
+                # Remove any potential markdown code blocks
+                json_str = json_str.replace("```json", "").replace("```", "").strip()
+                return json.loads(json_str)
+            except Exception as e:
+                print(f"Error parsing JSON from AI: {e}")
+                return content # Fallback: return raw text if parsing fails
+        
+        return content
+
+    except Exception as e:
+        print(f"Grok Email Error: {e}")
+        return "⚠️ I'm having trouble connecting to the AI right now. Please try again later."
+
+
 # --- UNIFIED DAILY BRIEFING GENERATOR ---
 def generate_full_daily_briefing(user_name, festival_name, quote, author, history_events, weather_data):
     """
@@ -140,7 +208,11 @@ def route_user_intent(text):
        - Keywords: search youtube, find video.
        - "entities": {{"query": "string"}}
 
-    11. "general_query":
+    11. "email_assistant":
+       - Keywords: write email, send mail, draft letter, email to.
+       - "entities": {{}}
+
+    12. "general_query":
        - Default for conversational questions or unknowns.
        - "entities": {{}}
 
@@ -165,7 +237,7 @@ def route_user_intent(text):
         print(f"Grok intent routing error: {e}")
         return {"intent": "general_query", "entities": {}}
 
-# --- WEATHER SUMMARY FUNCTION (RESTORED) ---
+# --- WEATHER SUMMARY FUNCTION ---
 def generate_weather_summary(weather_data, location):
     """
     Uses AI to create a conversational weather summary from raw API data.
