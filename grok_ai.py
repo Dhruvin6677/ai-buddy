@@ -333,3 +333,38 @@ def is_document_followup_question(text):
         return "yes" in response.json()["choices"][0]["message"]["content"].strip().lower()
     except:
         return True
+
+# --- VOICE TRANSCRIPTION (NEW) ---
+def transcribe_audio(audio_file_path):
+    """
+    Transcribes an audio file using Groq's Whisper model (via API).
+    """
+    if not GROK_API_KEY:
+        print("Grok API key missing for transcription.")
+        return None
+
+    url = "https://api.groq.com/openai/v1/audio/transcriptions"
+    
+    # We use the same header structure but 'Content-Type' is handled by 'files' in requests
+    headers = {
+        "Authorization": f"Bearer {GROK_API_KEY}"
+    }
+    
+    try:
+        with open(audio_file_path, "rb") as file:
+            files = {
+                "file": (os.path.basename(audio_file_path), file)
+            }
+            data = {
+                "model": "whisper-large-v3",
+                "response_format": "json"
+            }
+            
+            response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+            response.raise_for_status()
+            
+            return response.json().get("text")
+            
+    except Exception as e:
+        print(f"Audio transcription error: {e}")
+        return None
