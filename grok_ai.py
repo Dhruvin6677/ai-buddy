@@ -3,6 +3,7 @@ import requests
 import os
 import json
 import mimetypes
+import re  # Added for robust JSON parsing
 from datetime import datetime, timedelta
 
 # --- Configuration ---
@@ -48,7 +49,6 @@ def transcribe_audio(audio_file_path):
 
             # 2. CRITICAL FIX: Groq rejects files without specific extensions.
             # We force the filename in the request to be 'audio.ogg' to satisfy the validator.
-            # This does not rename the actual file on disk, just the label in the upload.
             api_filename = "voice_note.ogg" 
             if mime_type == "audio/mpeg":
                 api_filename = "voice_note.mp3"
@@ -79,7 +79,7 @@ def transcribe_audio(audio_file_path):
         print(f"❌ Audio transcription error: {e}")
         return None
 
-# --- 2. INTERACTIVE EMAIL DRAFTER ---
+# --- 2. INTERACTIVE EMAIL DRAFTER (FIXED) ---
 def draft_email_interactive(conversation_history):
     """
     Manages the conversational email drafting loop.
@@ -104,7 +104,7 @@ def draft_email_interactive(conversation_history):
     3. **Handle Scheduling**: Listen for commands like "Send it tomorrow at 10am", "Send in 2 hours", or "Send now".
     4. **FINAL OUTPUT**: ONLY when the user explicitly confirms to SEND (e.g., "Yes, send it", "Confirm", "Send tomorrow"), output a JSON object in this format (no other text):
     
-    JSON_ACTION: {{
+    {{
       "action": "SEND_EMAIL",
       "recipient_email": "extracted_email_address_or_null",
       "subject": "Final Subject Line",
@@ -128,17 +128,21 @@ def draft_email_interactive(conversation_history):
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
         
-        # Check if the AI wants to send (looks for the special token)
-        if "JSON_ACTION:" in content:
+        # --- ROBUST REGEX PARSING (FIXES THE JSON LEAK) ---
+        # Search for any JSON block containing the action key
+        # This fixes the issue where the bot shows you the JSON instead of executing it
+        json_match = re.search(r'\{[\s\S]*"action":\s*"SEND_EMAIL"[\s\S]*\}', content)
+        
+        if json_match:
             try:
-                # Extract JSON cleanly from the response
-                json_str = content.split("JSON_ACTION:")[1].strip()
-                # Remove any potential markdown code blocks
+                json_str = json_match.group(0)
+                # Remove any markdown formatting if present
                 json_str = json_str.replace("```json", "").replace("```", "").strip()
                 return json.loads(json_str)
             except Exception as e:
-                print(f"Error parsing JSON from AI: {e}")
-                return content # Fallback: return raw text if parsing fails
+                print(f"JSON Parse Error: {e}")
+                # If parsing fails, just return the text so user sees something
+                return content
         
         return content
 
