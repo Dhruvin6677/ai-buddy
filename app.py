@@ -51,6 +51,7 @@ from reminders import schedule_reminder, get_all_reminders, delete_reminder
 from messaging import send_message, send_template_message, send_interactive_menu, send_conversion_menu, send_reminders_list, send_delete_confirmation, send_google_drive_menu, send_meeting_proposal
 from document_processor import get_text_from_file
 from weather import get_weather
+from train_tracking import get_pnr_status, format_train_response
 
 
 app = Flask(__name__)
@@ -1171,6 +1172,30 @@ def process_natural_language_request(user_text, sender_number):
         
     elif intent == "general_query":
         response_text = ai_reply(user_text)
+
+    elif intent == "train_tracking":
+        # 1. Extract PNR from entity OR regex (fallback)
+        pnr = entities.get("pnr")
+        if not pnr:
+            # Fallback: Search for any 10-digit number in user text
+            import re
+            match = re.search(r'\b\d{10}\b', user_text)
+            if match:
+                pnr = match.group(0)
+
+        if pnr:
+            send_message(sender_number, f"🔍 Checking live status for PNR *{pnr}*...")
+            
+            # 2. Call our new Tracking Module
+            status_data = get_pnr_status(pnr)
+            
+            # 3. Send the result
+            response_text = format_train_response(status_data)
+            send_message(sender_number, response_text)
+            return
+        else:
+            send_message(sender_number, "❌ I see you want to track a train, but I couldn't find a valid 10-digit PNR number. Please type it correctly.")
+            return
 
     else:
         response_text = "🤔 I'm not sure how to handle that. Please try rephrasing, or type *menu*."
