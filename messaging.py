@@ -77,13 +77,11 @@ def send_interactive_menu(to, name):
                 "button": "Choose an Option",
                 "sections": [{"title": "Main Features","rows": [
                             {"id": "1", "title": "Set a Reminder", "description": "Schedule a one-time or recurring reminder."},
-                            {"id": "2", "title": "Fix Grammar", "description": "Correct spelling and grammar."},
-                            {"id": "3", "title": "Ask AI Anything", "description": "Chat with the AI assistant."},
-                            {"id": "4", "title": "File/Text Conversion", "description": "Convert between PDF and Word."},
-                            {"id": "5", "title": "Weather Forecast", "description": "Get the current weather."},
-                            {"id": "6", "title": "Currency Converter", "description": "Convert between currencies."},
-                            {"id": "7", "title": "AI Email Assistant", "description": "Get help writing professional emails."},
-                            {"id": "8", "title": "Google Drive", "description": "Manage and analyze files in your Drive."}
+                            {"id": "2", "title": "Ask AI Anything", "description": "Chat with the AI assistant."},
+                            {"id": "3", "title": "File/Text Conversion", "description": "Convert between PDF and Word."},
+                            {"id": "4", "title": "Weather Forecast", "description": "Get the current weather."},
+                            {"id": "5", "title": "Currency Converter", "description": "Convert between currencies."},
+                            {"id": "6", "title": "Google Drive", "description": "Manage and analyze files in your Drive."}
                         ]}]
             }
         }
