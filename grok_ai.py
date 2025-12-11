@@ -21,6 +21,7 @@ GROK_HEADERS = {
 def transcribe_audio(audio_file_path):
     """
     Transcribes an audio file using Groq's Whisper model (via API).
+    Includes strict filename handling to prevent 400 Errors.
     """
     if not GROK_API_KEY:
         print("❌ Groq API Key missing.")
@@ -40,21 +41,28 @@ def transcribe_audio(audio_file_path):
     try:
         # Open file in binary mode
         with open(audio_file_path, "rb") as file:
-            # 1. Determine MIME type safely
+            # 1. Determine MIME type (WhatsApp uses audio/ogg usually)
             mime_type, _ = mimetypes.guess_type(audio_file_path)
             if not mime_type:
-                mime_type = "audio/ogg" # Safe default for WhatsApp voice notes
+                mime_type = "audio/ogg" 
 
-            # 2. Construct the file payload strictly
+            # 2. CRITICAL FIX: Groq rejects files without specific extensions.
+            # We force the filename in the request to be 'audio.ogg' to satisfy the validator.
+            # This does not rename the actual file on disk, just the label in the upload.
+            api_filename = "voice_note.ogg" 
+            if mime_type == "audio/mpeg":
+                api_filename = "voice_note.mp3"
+            elif mime_type == "audio/wav":
+                api_filename = "voice_note.wav"
+
             files = {
-                "file": (os.path.basename(audio_file_path), file, mime_type)
+                "file": (api_filename, file, mime_type)
             }
             
-            # 3. Minimal data payload to avoid 400 errors
+            # 3. Payload
             data = {
-                "model": "whisper-large-v3", # Standard model
-                # "language": "en", # REMOVED: Can cause 400 if auto-detect fails
-                # "response_format": "json" # REMOVED: Default is JSON anyway
+                "model": "whisper-large-v3", # or "distil-whisper-large-v3-en"
+                "response_format": "json"
             }
             
             # 4. Send Request
@@ -63,7 +71,7 @@ def transcribe_audio(audio_file_path):
             # Check for errors
             if response.status_code != 200:
                 print(f"⚠️ Groq API Error: {response.text}")
-                response.raise_for_status()
+                return None
             
             return response.json().get("text")
             
