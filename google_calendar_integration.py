@@ -1,24 +1,17 @@
 # google_calendar_integration.py
 
 import os
+import json
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from datetime import timedelta
-import json
-import io
 
 # --- CONFIGURATION ---
-CLIENT_SECRETS_JSON = {
-    "web": {
-        "client_id": "316927646892-jdgnktunhf55reb5teb5nefcdo824bdl.apps.googleusercontent.com",
-        "project_id": "ai-b-466813",
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_secret": "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",
-        "redirect_uris": ["https://ai-buddy-bx6w.onrender.com/google-auth/callback"]
-    }
-}
+# SECURITY FIX: Load client secrets from environment variable instead of hardcoding
+# You must set GOOGLE_CLIENT_SECRET_JSON in your .env file with the content of client_secret.json
+CLIENT_SECRETS_JSON_STRING = os.environ.get("GOOGLE_CLIENT_SECRET_JSON")
+REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "https://ai-buddy-bx6w.onrender.com/google-auth/callback")
+
 SCOPES = [
     'https://www.googleapis.com/auth/calendar.events',
     'https://www.googleapis.com/auth/gmail.readonly',
@@ -28,19 +21,22 @@ SCOPES = [
     'https://www.googleapis.com/auth/youtube.readonly',
     'https://www.googleapis.com/auth/userinfo.email'
 ]
-REDIRECT_URI = "https://ai-buddy-bx6w.onrender.com/google-auth/callback"
 
 def get_google_auth_flow():
-    """Starts the Google OAuth 2.0 flow."""
-    # Use from_client_config to pass the dictionary directly
+    """Starts the Google OAuth 2.0 flow using secure credentials."""
+    if not CLIENT_SECRETS_JSON_STRING:
+        raise ValueError("❌ GOOGLE_CLIENT_SECRET_JSON environment variable is missing!")
+    
+    client_config = json.loads(CLIENT_SECRETS_JSON_STRING)
+    
     flow = Flow.from_client_config(
-        CLIENT_SECRETS_JSON,
+        client_config,
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI
     )
     return flow
 
-def create_google_calendar_event(credentials, task, run_time):
+def create_google_calendar_event(credentials, task, run_time, timezone='Asia/Kolkata'):
     """
     Creates an event on the user's primary Google Calendar and returns a link.
     """
@@ -54,11 +50,11 @@ def create_google_calendar_event(credentials, task, run_time):
             'description': f"Reminder set for {run_time.strftime('%I:%M %p')} via AI Buddy.",
             'start': {
                 'dateTime': run_time.strftime('%Y-%m-%dT%H:%M:%S'),
-                'timeZone': 'Asia/Kolkata',
+                'timeZone': timezone,
             },
             'end': {
                 'dateTime': end_time.strftime('%Y-%m-%dT%H:%M:%S'),
-                'timeZone': 'Asia/Kolkata',
+                'timeZone': timezone,
             },
             'reminders': {
                 'useDefault': True,
