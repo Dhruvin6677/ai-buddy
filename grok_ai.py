@@ -2,18 +2,19 @@
 import requests
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- Configuration ---
 GROK_API_KEY = os.environ.get("GROK_API_KEY")
 GROK_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROK_MODEL_FAST = "llama-3.1-8b-instant"
+# Using the smart model for better reasoning on dates/times
 GROK_MODEL_SMART = "llama-3.3-70b-versatile"
+GROK_MODEL_FAST = "llama-3.1-8b-instant"
+
 GROK_HEADERS = {
     "Authorization": f"Bearer {GROK_API_KEY}",
     "Content-Type": "application/json"
 }
-
 
 # --- UNIFIED DAILY BRIEFING GENERATOR ---
 def generate_full_daily_briefing(user_name, festival_name, quote, author, history_events, weather_data):
@@ -85,69 +86,75 @@ def route_user_intent(text):
     if not GROK_API_KEY:
         return {"intent": "general_query", "entities": {}}
 
+    # We inject the current time so the AI can calculate "tomorrow", "next week", or "at 9pm" (relative to today)
+    current_time_str = datetime.now().strftime('%Y-%m-%d %A, %H:%M:%S')
+
     prompt = f"""
-    You are an expert AI routing system for a WhatsApp assistant. Your job is to analyze the user's text and classify it into one of the predefined intents.
-    You MUST respond with a JSON object containing two keys: "intent" and "entities".
+    You are an advanced AI intent router. Analyze the user's text and extract structured data.
+    
+    **Current Date & Time:** {current_time_str}
 
-    The current date is: {datetime.now().strftime('%Y-%m-%d %A, %H:%M:%S')}
-
-    Here are the possible intents and the required entities for each:
+    **Possible Intents:**
 
     1. "schedule_meeting":
-       - Triggered by requests to schedule a meeting, find a time, or set up a call with others.
-       - "entities": {{"attendees": ["list_of_names"], "topic": "meeting_subject", "duration_minutes": <number>, "timeframe_hint": "e.g., 'next week', 'tomorrow afternoon', 'this Friday'"}}
+       - Keywords: schedule, meeting, book call, find time.
+       - "entities": {{"attendees": ["names"], "topic": "string", "duration_minutes": int}}
 
     2. "set_reminder":
-       - Triggered by requests to be reminded of something (for the user only).
-       - "entities": An ARRAY of objects, each with {{"task": "The core task of the reminder, e.g., 'call John'", "timestamp": "The fully resolved date and time for the reminder in 'YYYY-MM-DD HH:MM:SS' format.", "recurrence": "The recurrence rule if mentioned (e.g., 'every day'), otherwise null"}}
+       - Keywords: remind me, set alarm, alert me.
+       - "entities": An ARRAY of objects: [{{"task": "string", "timestamp": "YYYY-MM-DD HH:MM:SS", "recurrence": "string or null"}}]
+       - **CRITICAL RULE FOR REMINDERS:** - The "timestamp" field is MANDATORY. 
+         - If the user says "Every day at 9pm" but gives no start date, assume they mean **starting Today** (or Tomorrow if 9pm has passed).
+         - Calculate the specific "YYYY-MM-DD HH:MM:SS" for the *first occurrence* based on the Current Date provided above.
+         - Do not return a null timestamp.
 
     3. "get_reminders":
-       - Triggered by requests to see, check, show, or list all active reminders.
+       - Keywords: show reminders, check reminders, what are my reminders.
        - "entities": {{}}
 
     4. "log_expense":
-       - "entities": An array of objects, each with {{"cost": <number>, "item": "description", "place": "store_name_or_null", "timestamp": "YYYY-MM-DD HH:MM:SS format"}}
+       - Keywords: spent, paid, cost, bought.
+       - "entities": ARRAY of [{{"cost": number, "item": "string", "place": "string", "timestamp": "YYYY-MM-DD HH:MM:SS"}}]
 
     5. "convert_currency":
-       - "entities": An array of objects, each with {{"amount": <number>, "from_currency": "3-letter_code", "to_currency": "3-letter_code"}}
+       - Keywords: convert, usd to inr, how much is.
+       - "entities": ARRAY of [{{"amount": number, "from_currency": "code", "to_currency": "code"}}]
 
     6. "get_weather":
+       - Keywords: weather, temperature, forecast.
        - "entities": {{"location": "city_name"}}
 
-    7. "get_features":
-       - Triggered by questions like "what can you do?", "what are your features?", "help", or "what are your commands?".
+    7. "drive_search_file":
+       - Keywords: find file, search drive, look for document.
+       - "entities": {{"query": "string"}}
+
+    8. "drive_upload_file":
+       - Keywords: upload this, save to drive.
+       - "entities": {{}}
+    
+    9. "drive_analyze_file":
+       - Keywords: analyze file, summarize document from drive.
+       - "entities": {{"filename": "string"}}
+
+    10. "youtube_search":
+       - Keywords: search youtube, find video.
+       - "entities": {{"query": "string"}}
+
+    11. "general_query":
+       - Default for conversational questions or unknowns.
        - "entities": {{}}
 
-    8. "get_bot_identity":
-       - Triggered by questions like "who are you?", "what are you?", "who made you?", or "who created you?".
-       - "entities": {{}}
-
-    9. "youtube_search":
-       - Triggered by requests to find, search for, or get a video from YouTube.
-       - "entities": {{"query": "The search term for the video."}}
-
-    10. "drive_search_file":
-        - Triggered by requests to find or search for a file in Google Drive.
-        - "entities": {{"query": "The name or keyword of the file to search for."}}
-
-    11. "drive_analyze_file":
-        - Triggered by requests to summarize, analyze, or ask questions about a specific file in Google Drive.
-        - "entities": {{"filename": "The exact or partial filename to analyze."}}
-
-    12. "general_query":
-        - This is the default intent for any other general question or command.
-        - "entities": {{}}
-
     ---
-    User's text to analyze: "{text}"
+    User Input: "{text}"
     ---
-
-    Return only the JSON object.
+    
+    Return ONLY the JSON object with "intent" and "entities".
     """
+    
     payload = {
         "model": GROK_MODEL_SMART,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.0,
+        "temperature": 0.1, # Low temperature for precision
         "response_format": {"type": "json_object"}
     }
     try:
@@ -159,86 +166,10 @@ def route_user_intent(text):
         print(f"Grok intent routing error: {e}")
         return {"intent": "general_query", "entities": {}}
 
-# --- NEW WEATHER SUMMARY FUNCTION ---
-def generate_weather_summary(weather_data, location):
-    """
-    Uses AI to create a conversational weather summary from raw API data.
-    """
-    if not GROK_API_KEY:
-        # Provide a basic fallback if AI is not available
-        temp = weather_data.get('main', {}).get('temp', 'N/A')
-        condition = weather_data.get('weather', [{}])[0].get('description', 'N/A')
-        return f"🌤️ The weather in {location} is currently {temp}°C with {condition}."
-
-    prompt = f"""
-    You are a friendly and helpful weather reporter. Based on the following raw weather data for {location}, write a detailed and engaging 2-3 sentence summary.
-
-    - Main condition: {weather_data.get('weather', [{}])[0].get('description', 'N/A')}
-    - Temperature: {weather_data.get('main', {}).get('temp', 'N/A')}°C
-    - Feels like: {weather_data.get('main', {}).get('feels_like', 'N/A')}°C
-    - Humidity: {weather_data.get('main', {}).get('humidity', 'N/A')}%
-    - Wind speed: {weather_data.get('wind', {}).get('speed', 'N/A')} m/s
-
-    Start with an emoji that matches the weather. Be conversational and give a helpful tip (e.g., "it's a good day for a walk," or "you might want to carry an umbrella").
-    """
-
-    payload = {
-        "model": GROK_MODEL_FAST, # Fast model is perfect for this task
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.7
-    }
-    try:
-        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=20)
-        response.raise_for_status()
-        summary = response.json()["choices"][0]["message"]["content"].strip()
-        return summary
-    except Exception as e:
-        print(f"Grok weather summary error: {e}")
-        return "⚠️ Sorry, I couldn't generate a detailed weather summary right now."
-
-
 # --- OTHER AI FUNCTIONS ---
-def analyze_document_context(text):
-    if not GROK_API_KEY or not text or not text.strip(): return None
-    prompt = f"""You are an expert document analysis AI. Read the following text and determine its type and extract key information. Your response MUST be a JSON object with two keys: "doc_type" and "data". Possible "doc_type" values are: "resume", "project_plan", "meeting_invite", "q_and_a", "generic_document". The "data" key should be an empty object `{{}}` unless it's a "meeting_invite", in which case it should be `{{"task": "description of event", "timestamp": "YYYY-MM-DD HH:MM:SS"}}`. The current date is {datetime.now().strftime('%Y-%m-%d %A')}. Here is the text to analyze: --- {text} --- Return only the JSON object."""
-    payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "response_format": {"type": "json_object"} }
-    try:
-        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=45)
-        response.raise_for_status()
-        return json.loads(response.json()["choices"][0]["message"]["content"])
-    except Exception as e:
-        print(f"Grok document context analysis error: {e}")
-        return None
-
-def get_contextual_ai_response(document_text, question):
-    if not GROK_API_KEY: return "❌ The Grok API key is not configured."
-    prompt = f"""You are an AI assistant with a document's content loaded into your memory. A user is now asking a question about this document. Your task is to answer their question based *only* on the information provided in the document text. Here is the full text of the document: --- DOCUMENT START --- {document_text} --- DOCUMENT END --- Here is the user's question: "{question}". Provide a direct and helpful answer. If the answer cannot be found in the document, say "I couldn't find the answer to that in the document." """
-    payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3 }
-    try:
-        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=60)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"Grok contextual response error: {e}")
-        return "⚠️ Sorry, I had trouble answering that question."
-
-def is_document_followup_question(text):
-    if not GROK_API_KEY: return True
-    command_keywords = ["remind me", "hi", "hello", "hey", "menu", "what's the weather", "my expenses", "send an email", ".dev", ".test", ".nuke", ".stats"]
-    if any(keyword in text.lower() for keyword in command_keywords):
-        return False
-    prompt = f"""A user has previously uploaded a document and is in a follow-up conversation. Their new message is: "{text}". Is this message a question or command related to the document (e.g., "summarize it", "what are the key points?")? Or is it a completely new, unrelated command? Respond with only the word "yes" if it is a follow-up, or "no" if it is a new command."""
-    payload = { "model": GROK_MODEL_FAST, "messages": [{"role": "user", "content": prompt}], "temperature": 0.0, "max_tokens": 5 }
-    try:
-        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=10)
-        response.raise_for_status()
-        return "yes" in response.json()["choices"][0]["message"]["content"].strip().lower()
-    except Exception as e:
-        print(f"Grok context check error: {e}")
-        return True
 
 def ai_reply(prompt):
-    if not GROK_API_KEY: return "❌ The Grok API key is not configured. This feature is disabled."
+    if not GROK_API_KEY: return "❌ AI service unavailable."
     payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7 }
     try:
         res = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=20)
@@ -246,4 +177,43 @@ def ai_reply(prompt):
         return res.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print(f"Grok AI error: {e}")
-        return "⚠️ Sorry, I couldn't connect to the AI service right now."
+        return "⚠️ I'm having trouble thinking right now."
+
+def analyze_document_context(text):
+    if not GROK_API_KEY or not text: return None
+    prompt = f"""You are an expert document analysis AI. Read the following text and determine its type and extract key information. Your response MUST be a JSON object with two keys: "doc_type" and "data". Possible "doc_type" values are: "resume", "project_plan", "meeting_invite", "q_and_a", "generic_document". The "data" key should be an empty object `{{}}` unless it's a "meeting_invite", in which case it should be `{{"task": "description of event", "timestamp": "YYYY-MM-DD HH:MM:SS"}}`. The current date is {datetime.now().strftime('%Y-%m-%d %A')}. Here is the text to analyze: --- {text[:4000]} --- Return only the JSON object."""
+    payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "response_format": {"type": "json_object"} }
+    try:
+        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=30)
+        response.raise_for_status()
+        return json.loads(response.json()["choices"][0]["message"]["content"])
+    except Exception as e:
+        print(f"Grok document analysis error: {e}")
+        return None
+
+def get_contextual_ai_response(document_text, question):
+    if not GROK_API_KEY: return "AI key missing."
+    prompt = f"""You are an AI assistant with a document's content loaded into your memory. A user is now asking a question about this document. Your task is to answer their question based *only* on the information provided in the document text. Here is the full text of the document: --- DOCUMENT START --- {document_text[:6000]} --- DOCUMENT END --- Here is the user's question: "{question}". Provide a direct and helpful answer. If the answer cannot be found in the document, say "I couldn't find the answer to that in the document." """
+    payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3 }
+    try:
+        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=45)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"Grok contextual response error: {e}")
+        return "Could not answer based on file."
+
+def is_document_followup_question(text):
+    # Simple keyword check to avoid expensive API calls for navigation commands
+    if text.lower() in ["menu", "start", "hi", "hello", "1", "2", "3", "4", "5", "6", "0"]:
+        return False
+    # If not a simple command, ask AI to classify
+    if not GROK_API_KEY: return True
+    prompt = f"""A user has previously uploaded a document and is in a follow-up conversation. Their new message is: "{text}". Is this message a question or command related to the document (e.g., "summarize it", "what are the key points?")? Or is it a completely new, unrelated command? Respond with only the word "yes" if it is a follow-up, or "no" if it is a new command."""
+    payload = { "model": GROK_MODEL_FAST, "messages": [{"role": "user", "content": prompt}], "temperature": 0.0, "max_tokens": 5 }
+    try:
+        response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=10)
+        response.raise_for_status()
+        return "yes" in response.json()["choices"][0]["message"]["content"].strip().lower()
+    except:
+        return True
