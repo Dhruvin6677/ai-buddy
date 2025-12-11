@@ -17,6 +17,7 @@ def get_all_reminders(user, scheduler):
     if not user_jobs:
         return []
 
+    # Hardcoded Timezone as requested
     tz = pytz.timezone('Asia/Kolkata')
     reminders_list = []
 
@@ -60,14 +61,19 @@ def parse_recurrence_to_cron(recurrence_rule, start_time):
     rule_lower = recurrence_rule.lower()
     cron_args = {}
 
-    if 'every day' in rule_lower:
+    # FIX: Added 'everyday' and 'daily' to the check for robustness
+    if any(x in rule_lower for x in ['every day', 'everyday', 'daily']):
         cron_args['hour'] = start_time.hour
         cron_args['minute'] = start_time.minute
-    elif 'every week' in rule_lower or any(day in rule_lower for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
+        
+    # FIX: Added 'weekly' check
+    elif any(x in rule_lower for x in ['every week', 'weekly']) or any(day in rule_lower for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
         cron_args['day_of_week'] = start_time.weekday()
         cron_args['hour'] = start_time.hour
         cron_args['minute'] = start_time.minute
-    elif 'every month' in rule_lower:
+        
+    # FIX: Added 'monthly' check
+    elif any(x in rule_lower for x in ['every month', 'monthly']):
         day_match = re.search(r'(\d+)(?:st|nd|rd|th)?', rule_lower)
         if day_match:
             cron_args['day'] = int(day_match.group(1))
@@ -93,6 +99,8 @@ def schedule_reminder(task, timestamp, recurrence_rule, user, get_creds_func, sc
     try:
         # The timestamp is expected in 'YYYY-MM-DD HH:MM:SS' format from the AI
         start_time = date_parser.parse(timestamp)
+        
+        # Hardcoded Timezone as requested
         tz = pytz.timezone('Asia/Kolkata')
 
         if start_time.tzinfo is None:
