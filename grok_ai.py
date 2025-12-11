@@ -49,6 +49,7 @@ def transcribe_audio(audio_file_path):
 
             # 2. CRITICAL FIX: Groq rejects files without specific extensions.
             # We force the filename in the request to be 'audio.ogg' to satisfy the validator.
+            # This does not rename the actual file on disk, just the label in the upload.
             api_filename = "voice_note.ogg" 
             if mime_type == "audio/mpeg":
                 api_filename = "voice_note.mp3"
@@ -287,7 +288,11 @@ def route_user_intent(text):
        - Keywords: what can you do, show features, help, capabilities.
        - "entities": {{}}
 
-    14. "general_query":
+    14. "train_tracking":
+       - Keywords: pnr, train status, track train, check status.
+       - "entities": {{"pnr": "10_digit_number_string"}}
+
+    15. "general_query":
        - Default for conversational questions or unknowns.
        - "entities": {{}}
 
