@@ -212,7 +212,15 @@ def route_user_intent(text):
        - Keywords: write email, send mail, draft letter, email to.
        - "entities": {{}}
 
-    12. "general_query":
+    12. "get_bot_identity":
+       - Keywords: who made you, who created you, who are you, bot owner.
+       - "entities": {{}}
+
+    13. "get_features":
+       - Keywords: what can you do, show features, help, capabilities.
+       - "entities": {{}}
+
+    14. "general_query":
        - Default for conversational questions or unknowns.
        - "entities": {{}}
 
