@@ -80,10 +80,10 @@ def transcribe_audio(audio_file_path):
         print(f"❌ Audio transcription error: {e}")
         return None
 
-# --- 2. INTERACTIVE EMAIL DRAFTER (FIXED) ---
-def draft_email_interactive(conversation_history):
+# --- 2. INTERACTIVE EMAIL DRAFTER (UPDATED) ---
+def draft_email_interactive(conversation_history, user_name="User", recipients="Unknown"):
     """
-    Manages the conversational email drafting loop.
+    Manages the conversational email drafting loop with context awareness.
     Returns either a text response (question/draft) or a JSON object (final send command).
     """
     if not GROK_API_KEY:
@@ -94,20 +94,25 @@ def draft_email_interactive(conversation_history):
     system_prompt = f"""
     You are an expert AI Email Assistant. Current Time: {current_time}.
     
-    YOUR GOAL: Help the user write a perfect email.
+    CONTEXT:
+    - **Sender Name:** {user_name} (You MUST sign off the email with this name).
+    - **Recipient(s):** {recipients}.
+    
+    YOUR GOAL: Draft a professional email based on the user's input.
     
     RULES:
     1. **Clarify First**: If the user's request is short or vague (e.g., "mail for leave", "write to boss"), DO NOT draft yet. 
-       - Ask clarifying questions: "Who is it for?", "When?", "What is the specific reason?".
+       - Ask clarifying questions: "What is the specific reason?", "Any dates?".
     2. **Draft & Refine**: Once you have sufficient details, generate a clear Subject and Body. 
+       - Ensure the Body ends with "Best regards, {user_name}".
        - Show the draft to the user.
        - Ask: "Shall I send this, or do you want to make changes?"
-    3. **Handle Scheduling**: Listen for commands like "Send it tomorrow at 10am", "Send in 2 hours", or "Send now".
-    4. **FINAL OUTPUT**: ONLY when the user explicitly confirms to SEND (e.g., "Yes, send it", "Confirm", "Send tomorrow"), output a JSON object in this format (no other text):
+    3. **Handle Scheduling**: Listen for commands like "Send it tomorrow at 10am".
+    4. **FINAL OUTPUT**: ONLY when the user explicitly confirms to SEND (e.g., "Yes", "Send", "Confirm"), output a JSON object in this format (no other text):
     
     {{
       "action": "SEND_EMAIL",
-      "recipient_email": "extracted_email_address_or_null",
+      "recipient_email": "{recipients}",
       "subject": "Final Subject Line",
       "body": "Final Email Body Text",
       "scheduled_time": "YYYY-MM-DD HH:MM:SS" (or "NOW" if immediate)
@@ -131,7 +136,6 @@ def draft_email_interactive(conversation_history):
         
         # --- ROBUST REGEX PARSING (FIXES THE JSON LEAK) ---
         # Search for any JSON block containing the action key
-        # This fixes the issue where the bot shows you the JSON instead of executing it
         json_match = re.search(r'\{[\s\S]*"action":\s*"SEND_EMAIL"[\s\S]*\}', content)
         
         if json_match:
@@ -155,8 +159,7 @@ def draft_email_interactive(conversation_history):
 # --- UNIFIED DAILY BRIEFING GENERATOR ---
 def generate_full_daily_briefing(user_name, festival_name, quote, author, history_events, weather_data):
     """
-    Uses a single, powerful AI call to generate all components of the daily briefing,
-    including a culturally-aware greeting.
+    Uses a single, powerful AI call to generate all components of the daily briefing.
     """
     if not GROK_API_KEY:
         return {
@@ -177,9 +180,7 @@ def generate_full_daily_briefing(user_name, festival_name, quote, author, histor
     1.  **Greeting Generation:**
         -   Today's known festival is: "{festival_name if festival_name else 'None'}".
         -   Task: Create a cheerful morning greeting.
-        -   **Strict Rules:** If a festival_name is provided (e.g., "Raksha Bandhan"), you MUST generate a festive greeting for it. If festival_name is "None", you MUST generate a standard "Good Morning" greeting.
-        -   Example (if festival is "Raksha Bandhan"): "Happy Raksha Bandhan, {user_name}!"
-        -   Example (if festival is "None"): "☀️ Good Morning, {user_name}!"
+        -   **Strict Rules:** If a festival_name is provided, generate a festive greeting. If "None", generate a standard "Good Morning" greeting.
 
     2.  **Quote Analysis:**
         -   Quote: "{quote}" by {author}
@@ -222,7 +223,7 @@ def route_user_intent(text):
     if not GROK_API_KEY:
         return {"intent": "general_query", "entities": {}}
 
-    # We inject the current time so the AI can calculate "tomorrow", "next week", or "at 9pm" (relative to today)
+    # We inject the current time so the AI can calculate "tomorrow", "next week", or "at 9pm"
     current_time_str = datetime.now().strftime('%Y-%m-%d %A, %H:%M:%S')
 
     prompt = f"""
@@ -240,9 +241,8 @@ def route_user_intent(text):
        - Keywords: remind me, set alarm, alert me.
        - "entities": An ARRAY of objects: [{{"task": "string", "timestamp": "YYYY-MM-DD HH:MM:SS", "recurrence": "string or null"}}]
        - **CRITICAL RULE FOR REMINDERS:** - The "timestamp" field is MANDATORY. 
-         - If the user says "Every day at 9pm" but gives no start date, assume they mean **starting Today** (or Tomorrow if 9pm has passed).
-         - Calculate the specific "YYYY-MM-DD HH:MM:SS" for the *first occurrence* based on the Current Date provided above.
-         - Do not return a null timestamp.
+         - If the user says "Every day at 9pm" but gives no start date, assume they mean **starting Today**.
+         - Calculate the specific "YYYY-MM-DD HH:MM:SS".
 
     3. "get_reminders":
        - Keywords: show reminders, check reminders, what are my reminders.
@@ -306,7 +306,7 @@ def route_user_intent(text):
     payload = {
         "model": GROK_MODEL_SMART,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1, # Low temperature for precision
+        "temperature": 0.1, 
         "response_format": {"type": "json_object"}
     }
     try:
@@ -323,33 +323,24 @@ def generate_weather_summary(weather_data, location):
     Uses AI to create a conversational weather summary from raw API data.
     """
     if not GROK_API_KEY:
-        # Provide a basic fallback if AI is not available
         temp = weather_data.get('main', {}).get('temp', 'N/A')
-        condition = weather_data.get('weather', [{}])[0].get('description', 'N/A')
-        return f"🌤️ The weather in {location} is currently {temp}°C with {condition}."
+        return f"🌤️ The weather in {location} is currently {temp}°C."
 
     prompt = f"""
-    You are a friendly and helpful weather reporter. Based on the following raw weather data for {location}, write a detailed and engaging 2-3 sentence summary.
-
-    - Main condition: {weather_data.get('weather', [{}])[0].get('description', 'N/A')}
-    - Temperature: {weather_data.get('main', {}).get('temp', 'N/A')}°C
-    - Feels like: {weather_data.get('main', {}).get('feels_like', 'N/A')}°C
-    - Humidity: {weather_data.get('main', {}).get('humidity', 'N/A')}%
-    - Wind speed: {weather_data.get('wind', {}).get('speed', 'N/A')} m/s
-
-    Start with an emoji that matches the weather. Be conversational and give a helpful tip (e.g., "it's a good day for a walk," or "you might want to carry an umbrella").
+    You are a friendly and helpful weather reporter. 
+    Data: {json.dumps(weather_data)}. 
+    Task: Write a 2-sentence summary for {location}.
     """
 
     payload = {
-        "model": GROK_MODEL_FAST, # Fast model is perfect for this task
+        "model": GROK_MODEL_FAST, 
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
     try:
         response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=20)
         response.raise_for_status()
-        summary = response.json()["choices"][0]["message"]["content"].strip()
-        return summary
+        return response.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print(f"Grok weather summary error: {e}")
         return "⚠️ Sorry, I couldn't generate a detailed weather summary right now."
@@ -369,7 +360,7 @@ def ai_reply(prompt):
 
 def analyze_document_context(text):
     if not GROK_API_KEY or not text: return None
-    prompt = f"""You are an expert document analysis AI. Read the following text and determine its type and extract key information. Your response MUST be a JSON object with two keys: "doc_type" and "data". Possible "doc_type" values are: "resume", "project_plan", "meeting_invite", "q_and_a", "generic_document". The "data" key should be an empty object `{{}}` unless it's a "meeting_invite", in which case it should be `{{"task": "description of event", "timestamp": "YYYY-MM-DD HH:MM:SS"}}`. The current date is {datetime.now().strftime('%Y-%m-%d %A')}. Here is the text to analyze: --- {text[:4000]} --- Return only the JSON object."""
+    prompt = f"""You are an expert document analysis AI. Analyze this text: {text[:4000]}. Return JSON with keys: "doc_type" and "data"."""
     payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "response_format": {"type": "json_object"} }
     try:
         response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=30)
@@ -381,7 +372,7 @@ def analyze_document_context(text):
 
 def get_contextual_ai_response(document_text, question):
     if not GROK_API_KEY: return "AI key missing."
-    prompt = f"""You are an AI assistant with a document's content loaded into your memory. A user is now asking a question about this document. Your task is to answer their question based *only* on the information provided in the document text. Here is the full text of the document: --- DOCUMENT START --- {document_text[:6000]} --- DOCUMENT END --- Here is the user's question: "{question}". Provide a direct and helpful answer. If the answer cannot be found in the document, say "I couldn't find the answer to that in the document." """
+    prompt = f"""AI assistant here. Document: {document_text[:6000]}. Question: {question}. Answer based on doc."""
     payload = { "model": GROK_MODEL_SMART, "messages": [{"role": "user", "content": prompt}], "temperature": 0.3 }
     try:
         response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=45)
@@ -392,12 +383,10 @@ def get_contextual_ai_response(document_text, question):
         return "Could not answer based on file."
 
 def is_document_followup_question(text):
-    # Simple keyword check to avoid expensive API calls for navigation commands
     if text.lower() in ["menu", "start", "hi", "hello", "1", "2", "3", "4", "5", "6", "0"]:
         return False
-    # If not a simple command, ask AI to classify
     if not GROK_API_KEY: return True
-    prompt = f"""A user has previously uploaded a document and is in a follow-up conversation. Their new message is: "{text}". Is this message a question or command related to the document (e.g., "summarize it", "what are the key points?")? Or is it a completely new, unrelated command? Respond with only the word "yes" if it is a follow-up, or "no" if it is a new command."""
+    prompt = f"""Is "{text}" a follow-up question to a previous document? Reply 'yes' or 'no'."""
     payload = { "model": GROK_MODEL_FAST, "messages": [{"role": "user", "content": prompt}], "temperature": 0.0, "max_tokens": 5 }
     try:
         response = requests.post(GROK_URL, headers=GROK_HEADERS, json=payload, timeout=10)
