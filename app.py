@@ -172,7 +172,7 @@ def send_google_auth_link(sender_number):
     else:
         send_message(sender_number, "Google connection is not configured on the server.")
 
-# --- NEW: Email Task Wrapper ---
+# --- NEW: Email Task Wrapper to prevent attachment corruption ---
 def send_email_task(credentials, recipient_emails, subject, body, attachment_paths=None):
     """
     Wraps send_email to handle file cleanup after sending.
@@ -574,13 +574,14 @@ def handle_text_message(user_text, sender_number, session_data):
         history = session_data.get("history", [])
         history.append({"role": "user", "content": user_text})
         
+        # 2. Get User Name (Fix for "Best regards, User")
         user_data = get_user_from_db(sender_number)
         user_name = user_data.get("name", "User") if user_data else "User"
 
-        # 2. Call Grok (Interactive Mode) passing user_name
+        # 3. Call Grok (Interactive Mode) passing user_name
         ai_response = draft_email_interactive(history, user_name=user_name)
         
-        # 3. Check if AI wants to SEND (JSON received)
+        # 4. Check if AI wants to SEND (JSON received)
         if isinstance(ai_response, dict) and ai_response.get("action") == "SEND_EMAIL":
             
             # Extract details
@@ -631,7 +632,7 @@ def handle_text_message(user_text, sender_number, session_data):
             set_user_session(sender_number, None)
             return
 
-        # 4. Normal Conversation (AI asks questions or shows draft)
+        # 5. Normal Conversation (AI asks questions or shows draft)
         else:
             # Send AI response to user
             send_message(sender_number, str(ai_response))
@@ -948,6 +949,11 @@ def handle_text_message(user_text, sender_number, session_data):
             "history": [],
             "attachments": [] 
         }
+        
+        # --- FIX: INJECT CAPABILITY KNOWLEDGE (Prevents "I can't attach files" error) ---
+        initial_state["history"].append({"role": "system", "content": "CAPABILITY UPDATE: You CAN receive file attachments. If the user says they want to attach a document, tell them to simply upload the file to this WhatsApp chat, and you will see it."})
+        # -------------------------------------------------------------------------------
+
         set_user_session(sender_number, initial_state)
         send_message(sender_number, "📧 **AI Email Assistant**\n\nTell me what you want to write. I'll help you draft, refine, and schedule it.\n\n*Example:* 'Write a sick leave email to my boss for tomorrow.'\n\n_(You can also send a file now to attach it)_")
         return
@@ -1014,22 +1020,23 @@ def process_natural_language_request(user_text, sender_number):
             "history": [],
             "attachments": [] 
          }
+         
+         # --- FIX: INJECT CAPABILITY KNOWLEDGE ---
+         initial_state["history"].append({"role": "system", "content": "CAPABILITY UPDATE: You CAN receive file attachments. If the user says they want to attach a document, tell them to simply upload the file to this WhatsApp chat, and you will see it."})
+         # ----------------------------------------
+
          # Add the user's initial prompt to history so AI knows what to draft immediately
          initial_state["history"].append({"role": "user", "content": user_text})
          set_user_session(sender_number, initial_state)
          
-         # --- FIX START: Get User Name ---
+         # 1. Get User Name (Fix for "Best regards, User")
          user_data = get_user_from_db(sender_number)
          user_name = user_data.get("name", "User") if user_data else "User"
-         # --- FIX END ---
 
-         # Immediately call AI to start the process passing user_name
+         # 2. Call AI passing user_name
          ai_response = draft_email_interactive(initial_state["history"], user_name=user_name)
          
          if isinstance(ai_response, dict) and ai_response.get("action") == "SEND_EMAIL":
-             # Edge case: If user said "Send email to X saying Y" in one shot and AI is confident
-             # We handle it, but usually AI will ask for confirmation.
-             # For safety, let's treat it as a response we send back to user.
              pass 
 
          send_message(sender_number, str(ai_response))
