@@ -35,7 +35,7 @@ from grok_ai import (
     ai_reply,
     analyze_document_context,
     get_contextual_ai_response,
-    is_document_followup_question,
+    # is_document_followup_question, # Removed this unstable dependency
     draft_email_interactive,
     transcribe_audio
 )
@@ -302,7 +302,7 @@ def download_media_from_whatsapp(media_id, message_payload):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("\n🚀 Received message:", json.dumps(data, indent=2))
+    # print("\n🚀 Received message:", json.dumps(data, indent=2))
     try:
         entry = data.get("entry", [])[0].get("changes", [])[0].get("value", {})
         if "messages" not in entry or not entry["messages"]: return "OK", 200
@@ -561,13 +561,16 @@ def handle_text_message(user_text, sender_number, session_data):
     # --- EMAIL ASSISTANT STATE LOOP (UPDATED) ---
     if isinstance(session_data, dict) and session_data.get("state") == "email_drafting":
         
-        if user_text_lower in ["exit", "cancel", "stop"]:
+        if user_text_lower in ["exit", "cancel", "stop", "menu"]:
             # Cleanup any uploaded files if user cancels
             attachments = session_data.get("attachments", [])
             for f in attachments:
                 if os.path.exists(f): os.remove(f)
             set_user_session(sender_number, None)
-            send_message(sender_number, "❌ Email drafting cancelled.")
+            if user_text_lower == "menu":
+                send_interactive_menu(sender_number, get_user_from_db(sender_number).get("name", "User"))
+            else:
+                send_message(sender_number, "❌ Email drafting cancelled.")
             return
 
         # 1. Update History
@@ -843,16 +846,32 @@ def handle_text_message(user_text, sender_number, session_data):
             set_user_session(sender_number, None)
             return
 
+        # =========================================================
+        # FIX: REMOVE AI GATEKEEPER FROM DOCUMENT Q&A
+        # =========================================================
         if current_state == "awaiting_document_question":
-            if not is_document_followup_question(user_text):
+            # 1. CHECK FOR EXIT COMMANDS MANUALLY
+            if user_text_lower in ["menu", "start", "stop", "exit", "cancel", "0"]:
                 set_user_session(sender_number, None)
-            else:
-                doc_text = session_data.get("document_text")
-                send_message(sender_number, "🤖 Thinking...")
-                response = get_contextual_ai_response(doc_text, user_text)
-                send_message(sender_number, response)
-                send_message(sender_number, "_You can ask another question, or type `menu` to exit._")
+                if user_text_lower == "menu":
+                     send_interactive_menu(sender_number, get_user_from_db(sender_number).get("name", "User"))
+                else:
+                     send_message(sender_number, "Exited document analysis mode.")
                 return
+
+            # 2. ASSUME IT IS A FOLLOW-UP QUESTION (No AI Check)
+            doc_text = session_data.get("document_text")
+            if not doc_text:
+                send_message(sender_number, "❌ Error: Document content lost. Please upload again.")
+                set_user_session(sender_number, None)
+                return
+
+            send_message(sender_number, "🤖 Thinking...")
+            response = get_contextual_ai_response(doc_text, user_text)
+            send_message(sender_number, response)
+            send_message(sender_number, "_Ask another question about this document, or type `menu` to exit._")
+            return
+        # =========================================================
 
         elif current_state == "awaiting_ai":
             if user_text_lower in menu_commands or any(greet in user_text_lower for greet in greetings):
