@@ -5,7 +5,7 @@ import time
 
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
-API_VERSION = "v23.0"
+API_VERSION = "v19.0" # Changed from v23.0 to v19.0 to fix 404 errors
 
 def send_message(to, message):
     """Sends a standard text message."""
@@ -81,7 +81,8 @@ def send_interactive_menu(to, name):
                             {"id": "3", "title": "File/Text Conversion", "description": "Convert between PDF and Word."},
                             {"id": "4", "title": "Weather Forecast", "description": "Get the current weather."},
                             {"id": "5", "title": "Currency Converter", "description": "Convert between currencies."},
-                            {"id": "6", "title": "Google Drive", "description": "Manage and analyze files in your Drive."}
+                            {"id": "6", "title": "Google Drive", "description": "Manage and analyze files in your Drive."},
+                            {"id": "7", "title": "AI Email Assistant", "description": "Draft and send emails naturally."}
                         ]}]
             }
         }
