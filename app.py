@@ -37,7 +37,7 @@ from grok_ai import (
     get_contextual_ai_response,
     is_document_followup_question,
     draft_email_interactive,
-    transcribe_audio  # <--- NEW
+    transcribe_audio
 )
 # Imported new email sender
 from email_sender import send_email
@@ -171,6 +171,30 @@ def send_google_auth_link(sender_number):
             send_message(sender_number, "Sorry, I couldn't generate a connection link right now.")
     else:
         send_message(sender_number, "Google connection is not configured on the server.")
+
+# --- NEW: Email Task Wrapper ---
+def send_email_task(credentials, recipient_emails, subject, body, attachment_paths=None):
+    """
+    Wraps send_email to handle file cleanup after sending.
+    This ensures scheduled emails have access to the file, and it is deleted afterwards.
+    """
+    try:
+        # 1. Send the email
+        result = send_email(credentials, recipient_emails, subject, body, attachment_paths)
+        
+        # 2. Cleanup attachments after sending
+        if attachment_paths:
+            for path in attachment_paths:
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                        print(f"🧹 Cleaned up attachment: {path}")
+                except Exception as e:
+                    print(f"⚠️ Error deleting attachment {path}: {e}")
+        return result
+    except Exception as e:
+        print(f"❌ Error in send_email_task: {e}")
+        return "❌ An error occurred while trying to send the email."
 
 # === ROUTES ===
 @app.route('/')
@@ -355,22 +379,28 @@ def handle_document_message(message, sender_number, session_data, message_type):
         send_message(sender_number, "❌ I couldn't find the file in your message.")
         return
 
-    # --- EMAIL ATTACHMENT HANDLING ---
+    # --- EMAIL ATTACHMENT HANDLING (UPDATED) ---
     if isinstance(session_data, dict) and session_data.get("state") == "email_drafting":
         send_message(sender_number, "📎 Downloading attachment for your email...")
         downloaded_path, original_filename, mime_type = download_media_from_whatsapp(media_id, message)
         
         if downloaded_path:
-            # Add to session attachments
+            # 1. Add to session attachments
             attachments = session_data.get("attachments", [])
             attachments.append(downloaded_path)
             session_data["attachments"] = attachments
+            
+            # 2. UPDATE HISTORY so AI knows about the file (NEW FEATURE)
+            history = session_data.get("history", [])
+            history.append({"role": "system", "content": f"User uploaded an attachment: {original_filename}"})
+            session_data["history"] = history
+            
             set_user_session(sender_number, session_data)
             
-            send_message(sender_number, f"✅ Attached '{original_filename}'.\nYou can attach more files or continue writing your email.")
+            send_message(sender_number, f"✅ Attached **'{original_filename}'**.\n\nYou can attach more files or continue writing your email (e.g., 'Send it now').")
         else:
             send_message(sender_number, "❌ Failed to download attachment.")
-        return
+        return # Returns here to skip the 'finally' block that deletes the file
     # ---------------------------------
 
     downloaded_path = None
@@ -528,10 +558,14 @@ def handle_text_message(user_text, sender_number, session_data):
         send_message(sender_number, "Deletion cancelled.")
         return
 
-    # --- EMAIL ASSISTANT STATE LOOP (NEW) ---
+    # --- EMAIL ASSISTANT STATE LOOP (UPDATED) ---
     if isinstance(session_data, dict) and session_data.get("state") == "email_drafting":
         
         if user_text_lower in ["exit", "cancel", "stop"]:
+            # Cleanup any uploaded files if user cancels
+            attachments = session_data.get("attachments", [])
+            for f in attachments:
+                if os.path.exists(f): os.remove(f)
             set_user_session(sender_number, None)
             send_message(sender_number, "❌ Email drafting cancelled.")
             return
@@ -569,26 +603,28 @@ def handle_text_message(user_text, sender_number, session_data):
                 set_user_session(sender_number, None)
                 return
 
-            # Handle Scheduling
+            # Handle Scheduling & Sending
             if scheduled_time_str and scheduled_time_str != "NOW":
                 try:
                     run_date = date_parser.parse(scheduled_time_str)
                     
-                    # Add job to scheduler
+                    # USE send_email_task wrapper here
                     scheduler.add_job(
-                        func=send_email,
+                        func=send_email_task,
                         trigger='date',
                         run_date=run_date,
                         args=[creds, recipient, subject, body, attachments]
                     )
                     send_message(sender_number, f"✅ Email scheduled for *{run_date.strftime('%A, %b %d at %I:%M %p')}*!")
+                    
+                    # Do NOT delete attachments here; the job will do it.
                 except Exception as e:
                      send_message(sender_number, f"❌ Error understanding time '{scheduled_time_str}'. Sending NOW instead.")
-                     send_email(creds, recipient, subject, body, attachments)
+                     send_email_task(creds, recipient, subject, body, attachments)
             else:
-                # Send Immediately
+                # Send Immediately using wrapper
                 send_message(sender_number, "📨 Sending email now...")
-                status = send_email(creds, recipient, subject, body, attachments)
+                status = send_email_task(creds, recipient, subject, body, attachments)
                 send_message(sender_number, status)
 
             # Cleanup
