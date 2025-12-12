@@ -574,11 +574,11 @@ def handle_text_message(user_text, sender_number, session_data):
         history = session_data.get("history", [])
         history.append({"role": "user", "content": user_text})
         
-        # 2. Call Grok (Interactive Mode)
-        # Inform user we are processing (useful for long AI thoughts)
-        # send_message(sender_number, "🤖 ...") 
-        
-        ai_response = draft_email_interactive(history)
+        user_data = get_user_from_db(sender_number)
+        user_name = user_data.get("name", "User") if user_data else "User"
+
+        # 2. Call Grok (Interactive Mode) passing user_name
+        ai_response = draft_email_interactive(history, user_name=user_name)
         
         # 3. Check if AI wants to SEND (JSON received)
         if isinstance(ai_response, dict) and ai_response.get("action") == "SEND_EMAIL":
@@ -1018,8 +1018,13 @@ def process_natural_language_request(user_text, sender_number):
          initial_state["history"].append({"role": "user", "content": user_text})
          set_user_session(sender_number, initial_state)
          
-         # Immediately call AI to start the process
-         ai_response = draft_email_interactive(initial_state["history"])
+         # --- FIX START: Get User Name ---
+         user_data = get_user_from_db(sender_number)
+         user_name = user_data.get("name", "User") if user_data else "User"
+         # --- FIX END ---
+
+         # Immediately call AI to start the process passing user_name
+         ai_response = draft_email_interactive(initial_state["history"], user_name=user_name)
          
          if isinstance(ai_response, dict) and ai_response.get("action") == "SEND_EMAIL":
              # Edge case: If user said "Send email to X saying Y" in one shot and AI is confident
