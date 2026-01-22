@@ -5,7 +5,7 @@ import time
 
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
-API_VERSION = "v19.0" # Changed from v23.0 to v19.0 to fix 404 errors
+API_VERSION = "v24.0" # Changed from v23.0 to v19.0 to fix 404 errors
 
 def send_message(to, message):
     """Sends a standard text message."""
